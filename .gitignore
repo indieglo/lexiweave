@@ -1,0 +1,31 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+.venv/
+
+# User data - NEVER commit
+data/
+
+# Real configs contain API keys and personal settings
+config/global.json
+config/languages/*.json
+!config/languages/*.example.json
+
+# Documents - personal data and internal specs
+Documents/
+
+# Claude Code
+.claude/
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# uv
+.python-version

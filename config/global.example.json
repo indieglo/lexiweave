@@ -1,0 +1,6 @@
+{
+    "anthropic_api_key": "YOUR_API_KEY_HERE",
+    "anthropic_model": "claude-sonnet-4-5-20250929",
+    "default_language": "es",
+    "languages": ["es", "ca"]
+}

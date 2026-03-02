@@ -1,0 +1,15 @@
+{
+    "language_code": "es",
+    "language_name": "Spanish",
+    "target_cefr": "C1",
+    "current_cefr": "B1",
+    "tts_voice": "es-ES-Standard-A",
+    "tts_provider": "google_cloud",
+    "forvo_language_code": "es",
+    "definition_language": "es",
+    "definition_style": "monolingual_simple",
+    "sentence_levels": ["current", "stretch"],
+    "anki_deck_name": "Spanish::Vocabulary",
+    "anki_note_type": "cloze_deletion",
+    "prompt_overrides": {}
+}

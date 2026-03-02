@@ -1,0 +1,15 @@
+{
+    "language_code": "ca",
+    "language_name": "Catalan",
+    "target_cefr": "B1",
+    "current_cefr": "A1",
+    "tts_voice": "",
+    "tts_provider": "",
+    "forvo_language_code": "ca",
+    "definition_language": "ca",
+    "definition_style": "monolingual_simple",
+    "sentence_levels": ["current", "stretch"],
+    "anki_deck_name": "Catalan::Vocabulary",
+    "anki_note_type": "cloze_deletion",
+    "prompt_overrides": {}
+}
