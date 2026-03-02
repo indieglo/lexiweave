@@ -22,8 +22,25 @@ from lexiweave.config import (
     load_global_config,
     load_language_config,
 )
+from lexiweave.generators.cognates import (
+    apply_cognates,
+    generate_cognates,
+    get_words_needing_cognates,
+)
+from lexiweave.generators.definitions import (
+    apply_definitions,
+    generate_definitions,
+    get_words_needing_definitions,
+)
+from lexiweave.generators.sentences import (
+    apply_sentences,
+    generate_sentences,
+    get_words_needing_sentences,
+)
 from lexiweave.importers.duolingo import import_duolingo
 from lexiweave.tracking.vocabulary_store import VocabularyStore
+from lexiweave.utils.cache import ResponseCache
+from lexiweave.utils.llm import LLMClient, LLMError
 
 app = typer.Typer(
     name="lexiweave",
@@ -32,6 +49,8 @@ app = typer.Typer(
 )
 assess_app = typer.Typer(help="Assessment and gap analysis commands.")
 app.add_typer(assess_app, name="assess")
+generate_app = typer.Typer(help="Generate content for vocabulary entries using AI.")
+app.add_typer(generate_app, name="generate")
 console = Console()
 
 
@@ -307,3 +326,165 @@ def assess_grammar(
             )
 
         console.print(detail_table)
+
+
+# --- Generate commands ---
+
+
+def _make_llm_client(global_config, data_dir) -> LLMClient:
+    """Create an LLM client with caching from config."""
+    cache = ResponseCache(data_dir / "cache")
+    return LLMClient(
+        api_key=global_config.anthropic_api_key,
+        model=global_config.anthropic_model,
+        cache=cache,
+    )
+
+
+@generate_app.command(name="definitions")
+def generate_definitions_cmd(
+    lang: str = typer.Option("es", "--lang", help="Language code"),
+    limit: int = typer.Option(50, "--limit", help="Max words to process"),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Show what would be generated"),
+) -> None:
+    """Generate monolingual definitions for vocabulary entries."""
+    global_config = load_global_config()
+    data_dir = get_data_dir(global_config)
+    vocab_store = VocabularyStore(data_dir, lang)
+
+    try:
+        lang_config = load_language_config(lang)
+    except FileNotFoundError as e:
+        console.print(f"[red]{e}[/red]")
+        raise typer.Exit(1) from None
+
+    entries = get_words_needing_definitions(vocab_store)[:limit]
+
+    if not entries:
+        console.print(f"[dim]{lang}: All vocabulary entries already have definitions.[/dim]")
+        return
+
+    if dry_run:
+        console.print(f"[bold]Would generate definitions for {len(entries)} words:[/bold]")
+        for entry in entries[:20]:
+            console.print(f"  {entry.word}")
+        if len(entries) > 20:
+            console.print(f"  ... and {len(entries) - 20} more")
+        return
+
+    try:
+        llm_client = _make_llm_client(global_config, data_dir)
+    except LLMError as e:
+        console.print(f"[red]{e}[/red]")
+        raise typer.Exit(1) from None
+
+    words = [e.word for e in entries]
+    console.print(f"Generating definitions for {len(words)} words...")
+
+    results = generate_definitions(words, lang_config, llm_client)
+    applied = apply_definitions(results, vocab_store, model_name=global_config.anthropic_model)
+
+    console.print(f"[green]Done! {applied} definitions added.[/green]")
+
+
+@generate_app.command(name="sentences")
+def generate_sentences_cmd(
+    lang: str = typer.Option("es", "--lang", help="Language code"),
+    limit: int = typer.Option(50, "--limit", help="Max words to process"),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Show what would be generated"),
+) -> None:
+    """Generate cloze-deletion sentences for vocabulary entries."""
+    global_config = load_global_config()
+    data_dir = get_data_dir(global_config)
+    vocab_store = VocabularyStore(data_dir, lang)
+
+    try:
+        lang_config = load_language_config(lang)
+    except FileNotFoundError as e:
+        console.print(f"[red]{e}[/red]")
+        raise typer.Exit(1) from None
+
+    entries = get_words_needing_sentences(vocab_store)[:limit]
+
+    if not entries:
+        console.print(f"[dim]{lang}: All vocabulary entries already have sentences.[/dim]")
+        return
+
+    if dry_run:
+        console.print(f"[bold]Would generate sentences for {len(entries)} words:[/bold]")
+        for entry in entries[:20]:
+            console.print(f"  {entry.word}")
+        if len(entries) > 20:
+            console.print(f"  ... and {len(entries) - 20} more")
+        return
+
+    try:
+        llm_client = _make_llm_client(global_config, data_dir)
+    except LLMError as e:
+        console.print(f"[red]{e}[/red]")
+        raise typer.Exit(1) from None
+
+    words = [e.word for e in entries]
+    console.print(f"Generating sentences for {len(words)} words...")
+
+    results = generate_sentences(words, lang_config, llm_client)
+    applied = apply_sentences(results, vocab_store)
+
+    console.print(f"[green]Done! {applied} entries updated with sentences.[/green]")
+
+
+@generate_app.command(name="cognates")
+def generate_cognates_cmd(
+    lang: str = typer.Option("es", "--lang", help="Source language code"),
+    target_lang: str = typer.Option(..., "--target-lang", help="Target language code"),
+    limit: int = typer.Option(50, "--limit", help="Max words to process"),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Show what would be generated"),
+) -> None:
+    """Generate cognate analysis between language pairs."""
+    global_config = load_global_config()
+    data_dir = get_data_dir(global_config)
+    vocab_store = VocabularyStore(data_dir, lang)
+
+    try:
+        lang_config = load_language_config(lang)
+    except FileNotFoundError as e:
+        console.print(f"[red]{e}[/red]")
+        raise typer.Exit(1) from None
+
+    entries = get_words_needing_cognates(vocab_store, target_lang)[:limit]
+
+    if not entries:
+        console.print(
+            f"[dim]{lang}: All vocabulary entries already have "
+            f"{target_lang} cognates.[/dim]"
+        )
+        return
+
+    if dry_run:
+        console.print(
+            f"[bold]Would analyze cognates for {len(entries)} words "
+            f"({lang} → {target_lang}):[/bold]"
+        )
+        for entry in entries[:20]:
+            console.print(f"  {entry.word}")
+        if len(entries) > 20:
+            console.print(f"  ... and {len(entries) - 20} more")
+        return
+
+    try:
+        llm_client = _make_llm_client(global_config, data_dir)
+    except LLMError as e:
+        console.print(f"[red]{e}[/red]")
+        raise typer.Exit(1) from None
+
+    words = [e.word for e in entries]
+    console.print(
+        f"Analyzing cognates for {len(words)} words ({lang} → {target_lang})..."
+    )
+
+    results = generate_cognates(
+        words, lang_config.language_name, target_lang, llm_client
+    )
+    applied = apply_cognates(results, vocab_store, target_lang)
+
+    console.print(f"[green]Done! {applied} cognate entries added.[/green]")
