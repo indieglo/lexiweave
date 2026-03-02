@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import shutil
 from pathlib import Path
 
@@ -9,10 +10,17 @@ import typer
 from rich.console import Console
 from rich.table import Table
 
+from lexiweave.assessment.gap_report import (
+    format_report_markdown,
+    format_report_rich,
+    generate_report,
+)
+from lexiweave.assessment.grammar_store import GrammarStore
 from lexiweave.config import (
     DEFAULT_CONFIG_DIR,
     get_data_dir,
     load_global_config,
+    load_language_config,
 )
 from lexiweave.importers.duolingo import import_duolingo
 from lexiweave.tracking.vocabulary_store import VocabularyStore
@@ -22,6 +30,8 @@ app = typer.Typer(
     help="Multi-language AI-powered vocabulary tracking and card generation.",
     no_args_is_help=True,
 )
+assess_app = typer.Typer(help="Assessment and gap analysis commands.")
+app.add_typer(assess_app, name="assess")
 console = Console()
 
 
@@ -194,3 +204,106 @@ def stats(
 
         console.print(table)
         console.print()
+
+
+# --- Assess commands ---
+
+
+@assess_app.command(name="report")
+def assess_report(
+    lang: str = typer.Option("es", "--lang", help="Language code"),
+    export: bool = typer.Option(False, "--export", help="Also save report as markdown file"),
+) -> None:
+    """Generate a prioritized gap analysis report."""
+    global_config = load_global_config()
+    data_dir = get_data_dir(global_config)
+
+    grammar_store = GrammarStore(data_dir, lang)
+    vocab_store = VocabularyStore(data_dir, lang)
+
+    lang_config = None
+    with contextlib.suppress(FileNotFoundError):
+        lang_config = load_language_config(lang)
+
+    report = generate_report(grammar_store, vocab_store, lang_config)
+
+    format_report_rich(report, console)
+
+    if export:
+        md = format_report_markdown(report)
+        export_path = data_dir / "languages" / lang / "gap_report.md"
+        export_path.parent.mkdir(parents=True, exist_ok=True)
+        export_path.write_text(md, encoding="utf-8")
+        console.print(f"[green]Report saved to {export_path}[/green]")
+
+
+@assess_app.command(name="grammar")
+def assess_grammar(
+    lang: str = typer.Option("es", "--lang", help="Language code"),
+) -> None:
+    """Show grammar assessment summary."""
+    global_config = load_global_config()
+    data_dir = get_data_dir(global_config)
+
+    grammar_store = GrammarStore(data_dir, lang)
+    summary = grammar_store.get_summary()
+
+    if summary.total_concepts == 0:
+        console.print(
+            f"[dim]{lang}: No grammar assessment data yet. "
+            f"Add a grammar_gaps.json to data/languages/{lang}/.[/dim]"
+        )
+        return
+
+    table = Table(title=f"Grammar Assessment: {lang.upper()}")
+    table.add_column("Metric", style="bold")
+    table.add_column("Value", justify="right")
+
+    table.add_row("Assessment date", summary.assessment_date or "unknown")
+    if summary.assessment_sources:
+        table.add_row("Sources", ", ".join(summary.assessment_sources))
+    table.add_row("Total concepts", str(summary.total_concepts))
+    table.add_row("Total error examples", str(summary.total_error_examples))
+    table.add_row("Strengths noted", str(summary.total_strengths))
+
+    if summary.by_status:
+        table.add_row("", "")
+        table.add_row("[underline]By Status[/underline]", "")
+        status_colors = {"gap": "red", "weak": "yellow", "untested": "dim", "strong": "green"}
+        for status, count in sorted(summary.by_status.items()):
+            color = status_colors.get(status, "white")
+            table.add_row(f"  [{color}]{status}[/{color}]", str(count))
+
+    if summary.by_cefr_level:
+        table.add_row("", "")
+        table.add_row("[underline]By CEFR Level[/underline]", "")
+        for level, count in sorted(summary.by_cefr_level.items()):
+            table.add_row(f"  {level}", str(count))
+
+    console.print(table)
+    console.print()
+
+    # Show concepts sorted by priority
+    concepts = grammar_store.get_concepts_by_priority()
+    if concepts:
+        detail_table = Table(title="Concepts by Priority")
+        detail_table.add_column("#", justify="right", style="dim")
+        detail_table.add_column("Concept", style="bold")
+        detail_table.add_column("CEFR")
+        detail_table.add_column("Status")
+        detail_table.add_column("Confidence", justify="right")
+        detail_table.add_column("Errors", justify="right")
+
+        status_colors = {"gap": "red", "weak": "yellow", "untested": "dim", "strong": "green"}
+        for c in concepts:
+            color = status_colors.get(c.status, "white")
+            detail_table.add_row(
+                str(c.priority),
+                c.name,
+                c.cefr_level,
+                f"[{color}]{c.status}[/{color}]",
+                f"{c.confidence:.0%}",
+                str(len(c.error_examples)),
+            )
+
+        console.print(detail_table)
