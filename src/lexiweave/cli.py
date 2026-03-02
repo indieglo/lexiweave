@@ -49,6 +49,12 @@ from lexiweave.generators.sentences import (
     get_words_needing_sentences,
 )
 from lexiweave.importers.duolingo import import_duolingo
+from lexiweave.tracking.stats import (
+    format_stats,
+    get_cross_language_stats,
+    get_pipeline_stats,
+)
+from lexiweave.tracking.strength import sync_anki
 from lexiweave.tracking.vocabulary_store import VocabularyStore
 from lexiweave.utils.cache import ResponseCache
 from lexiweave.utils.llm import LLMClient, LLMError
@@ -64,6 +70,8 @@ generate_app = typer.Typer(help="Generate content for vocabulary entries using A
 app.add_typer(generate_app, name="generate")
 export_app = typer.Typer(help="Export vocabulary to flashcard formats.")
 app.add_typer(export_app, name="export")
+track_app = typer.Typer(help="Track vocabulary strength and progress.")
+app.add_typer(track_app, name="track")
 console = Console()
 
 
@@ -595,3 +603,142 @@ def export_anki_cmd(
             f"[dim]  {result.skipped} entries skipped "
             f"(no definitions or sentences)[/dim]"
         )
+
+
+# --- Track commands ---
+
+
+@track_app.command(name="sync-anki")
+def track_sync_anki_cmd(
+    file: Path = typer.Option(..., "--file", help="Path to Anki .apkg export file"),
+    lang: str = typer.Option("es", "--lang", help="Language code"),
+) -> None:
+    """Sync Anki review data to update vocabulary strength scores."""
+    if not file.exists():
+        console.print(f"[red]File not found: {file}[/red]")
+        raise typer.Exit(1)
+
+    global_config = load_global_config()
+    data_dir = get_data_dir(global_config)
+    vocab_store = VocabularyStore(data_dir, lang)
+
+    console.print(f"Syncing Anki data from [bold]{file}[/bold]...")
+    result = sync_anki(file, vocab_store)
+
+    if result.errors:
+        for error in result.errors:
+            console.print(f"[red]{error}[/red]")
+        raise typer.Exit(1)
+
+    console.print(f"[green]Done! Matched {result.entries_matched} entries, "
+                  f"updated {result.entries_updated}.[/green]")
+    if result.entries_not_found > 0:
+        console.print(
+            f"[dim]  {result.entries_not_found} Anki cards "
+            f"had no matching vocabulary entry.[/dim]"
+        )
+
+
+@track_app.command(name="stats")
+def track_stats_cmd(
+    lang: str | None = typer.Option(
+        None, "--lang", help="Language code (default: all configured languages)"
+    ),
+) -> None:
+    """Show detailed pipeline progress and strength statistics."""
+    global_config = load_global_config()
+    data_dir = get_data_dir(global_config)
+
+    if lang:
+        vocab_store = VocabularyStore(data_dir, lang)
+        stats = get_pipeline_stats(vocab_store)
+        if stats.total == 0:
+            console.print(
+                f"[dim]{lang}: No vocabulary data yet. "
+                f"Run `lexiweave import` to add words.[/dim]"
+            )
+            return
+        format_stats(stats, console)
+    else:
+        languages = global_config.languages
+        all_stats = get_cross_language_stats(data_dir, languages)
+        if not all_stats:
+            console.print("[dim]No vocabulary data found for any language.[/dim]")
+            return
+        for stats in all_stats:
+            format_stats(stats, console)
+            console.print()
+
+
+# --- Generate all command ---
+
+
+@generate_app.command(name="all")
+def generate_all_cmd(
+    lang: str = typer.Option("es", "--lang", help="Language code"),
+    limit: int = typer.Option(50, "--limit", help="Max words to process per stage"),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Show what would be generated"),
+) -> None:
+    """Run all generation stages: definitions, sentences, cognates, audio."""
+    global_config = load_global_config()
+    data_dir = get_data_dir(global_config)
+    vocab_store = VocabularyStore(data_dir, lang)
+
+    try:
+        lang_config = load_language_config(lang)
+    except FileNotFoundError as e:
+        console.print(f"[red]{e}[/red]")
+        raise typer.Exit(1) from None
+
+    llm_client = None
+
+    def _get_llm():
+        nonlocal llm_client
+        if llm_client is None:
+            try:
+                llm_client = _make_llm_client(global_config, data_dir)
+            except LLMError as e:
+                console.print(f"[red]{e}[/red]")
+                raise typer.Exit(1) from None
+        return llm_client
+
+    # --- Definitions ---
+    entries = get_words_needing_definitions(vocab_store)[:limit]
+    if entries:
+        if dry_run:
+            console.print(f"[bold]Would generate definitions for {len(entries)} words[/bold]")
+        else:
+            console.print(f"Generating definitions for {len(entries)} words...")
+            results = generate_definitions([e.word for e in entries], lang_config, _get_llm())
+            model = global_config.anthropic_model
+            applied = apply_definitions(results, vocab_store, model_name=model)
+            console.print(f"[green]  {applied} definitions added.[/green]")
+
+    # --- Sentences ---
+    entries = get_words_needing_sentences(vocab_store)[:limit]
+    if entries:
+        if dry_run:
+            console.print(f"[bold]Would generate sentences for {len(entries)} words[/bold]")
+        else:
+            console.print(f"Generating sentences for {len(entries)} words...")
+            results = generate_sentences([e.word for e in entries], lang_config, _get_llm())
+            applied = apply_sentences(results, vocab_store)
+            console.print(f"[green]  {applied} entries updated with sentences.[/green]")
+
+    # --- Audio ---
+    entries = get_words_needing_audio(vocab_store)[:limit]
+    if entries:
+        if dry_run:
+            console.print(f"[bold]Would generate audio for {len(entries)} words[/bold]")
+        else:
+            provider = make_audio_provider(lang_config)
+            audio_dir = data_dir / "languages" / lang / "audio"
+            console.print(f"Generating audio for {len(entries)} words...")
+            audio_results = generate_audio(entries, audio_dir, provider)
+            applied = apply_audio(audio_results, vocab_store)
+            console.print(f"[green]  {applied} audio files generated.[/green]")
+
+    if dry_run:
+        console.print("\n[dim]Dry run complete. No changes made.[/dim]")
+    else:
+        console.print("\n[green]All generation stages complete.[/green]")
