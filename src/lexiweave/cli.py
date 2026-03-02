@@ -22,6 +22,17 @@ from lexiweave.config import (
     load_global_config,
     load_language_config,
 )
+from lexiweave.exporters.anki_export import (
+    export_apkg,
+    export_csv,
+    get_exportable_entries,
+)
+from lexiweave.generators.audio import (
+    apply_audio,
+    generate_audio,
+    get_words_needing_audio,
+    make_audio_provider,
+)
 from lexiweave.generators.cognates import (
     apply_cognates,
     generate_cognates,
@@ -51,6 +62,8 @@ assess_app = typer.Typer(help="Assessment and gap analysis commands.")
 app.add_typer(assess_app, name="assess")
 generate_app = typer.Typer(help="Generate content for vocabulary entries using AI.")
 app.add_typer(generate_app, name="generate")
+export_app = typer.Typer(help="Export vocabulary to flashcard formats.")
+app.add_typer(export_app, name="export")
 console = Console()
 
 
@@ -488,3 +501,97 @@ def generate_cognates_cmd(
     applied = apply_cognates(results, vocab_store, target_lang)
 
     console.print(f"[green]Done! {applied} cognate entries added.[/green]")
+
+
+@generate_app.command(name="audio")
+def generate_audio_cmd(
+    lang: str = typer.Option("es", "--lang", help="Language code"),
+    limit: int = typer.Option(50, "--limit", help="Max words to process"),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Show what would be generated"),
+) -> None:
+    """Generate pronunciation audio for vocabulary entries using Edge TTS."""
+    global_config = load_global_config()
+    data_dir = get_data_dir(global_config)
+    vocab_store = VocabularyStore(data_dir, lang)
+
+    try:
+        lang_config = load_language_config(lang)
+    except FileNotFoundError as e:
+        console.print(f"[red]{e}[/red]")
+        raise typer.Exit(1) from None
+
+    entries = get_words_needing_audio(vocab_store)[:limit]
+
+    if not entries:
+        console.print(f"[dim]{lang}: All vocabulary entries already have audio.[/dim]")
+        return
+
+    if dry_run:
+        console.print(f"[bold]Would generate audio for {len(entries)} words:[/bold]")
+        for entry in entries[:20]:
+            console.print(f"  {entry.word}")
+        if len(entries) > 20:
+            console.print(f"  ... and {len(entries) - 20} more")
+        return
+
+    provider = make_audio_provider(lang_config)
+    audio_dir = data_dir / "languages" / lang / "audio"
+
+    console.print(f"Generating audio for {len(entries)} words (voice: {provider.voice})...")
+
+    results = generate_audio(entries, audio_dir, provider)
+    applied = apply_audio(results, vocab_store)
+    errors = [r.error for r in results if not r.success]
+
+    console.print(f"[green]Done! {applied} audio files generated.[/green]")
+    for error in errors[:5]:
+        console.print(f"[yellow]  Error: {error}[/yellow]")
+
+
+# --- Export commands ---
+
+
+@export_app.command(name="anki")
+def export_anki_cmd(
+    lang: str = typer.Option("es", "--lang", help="Language code"),
+    fmt: str = typer.Option("apkg", "--format", help="Export format: apkg or csv"),
+    incremental: bool = typer.Option(
+        False, "--incremental", help="Only export new entries"
+    ),
+) -> None:
+    """Export vocabulary to Anki deck (.apkg) or CSV file."""
+    global_config = load_global_config()
+    data_dir = get_data_dir(global_config)
+    vocab_store = VocabularyStore(data_dir, lang)
+
+    try:
+        lang_config = load_language_config(lang)
+    except FileNotFoundError as e:
+        console.print(f"[red]{e}[/red]")
+        raise typer.Exit(1) from None
+
+    entries = get_exportable_entries(vocab_store, incremental=incremental)
+
+    if not entries:
+        console.print(f"[dim]{lang}: No entries to export.[/dim]")
+        return
+
+    output_dir = data_dir / "languages" / lang / "exports"
+
+    if fmt == "csv":
+        result = export_csv(entries, lang_config, output_dir)
+    else:
+        result = export_apkg(entries, lang_config, output_dir)
+
+    if result.errors:
+        for error in result.errors:
+            console.print(f"[red]{error}[/red]")
+        if result.cards_exported == 0:
+            raise typer.Exit(1)
+
+    console.print(f"[green]Exported {result.cards_exported} cards to {result.file_path}[/green]")
+    if result.skipped > 0:
+        console.print(
+            f"[dim]  {result.skipped} entries skipped "
+            f"(no definitions or sentences)[/dim]"
+        )
