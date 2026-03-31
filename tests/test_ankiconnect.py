@@ -190,7 +190,7 @@ class TestSync:
         store.update_entry("es_comer_001", {"anki_note_id": "999"})
 
         client = _mock_client()
-        models = ["Lexiweave Cloze", "Lexiweave Vocabulary"]
+        models = ["Lexiweave Cloze v2", "Lexiweave Vocabulary v2"]
         # version, deckNames (exists), modelNames x2 (both exist) — no creates
         client._request.side_effect = [6, ["Spanish::Vocabulary"], models, models]
 
@@ -210,7 +210,7 @@ class TestSync:
         store.update_entry("es_comer_001", {"anki_note_id": "999"})
 
         client = _mock_client()
-        models = ["Lexiweave Cloze", "Lexiweave Vocabulary"]
+        models = ["Lexiweave Cloze v2", "Lexiweave Vocabulary v2"]
         client._request.side_effect = [6, ["Spanish::Vocabulary"], models, models, None]
 
         result = sync(store.load().entries, _lang_config(), store, incremental=False, client=client)
@@ -225,7 +225,7 @@ class TestSync:
         store.add_entry(_empty_entry())
 
         client = _mock_client()
-        models = ["Lexiweave Cloze", "Lexiweave Vocabulary"]
+        models = ["Lexiweave Cloze v2", "Lexiweave Vocabulary v2"]
         client._request.side_effect = [6, ["Spanish::Vocabulary"], models, models]
 
         result = sync(store.load().entries, _lang_config(), store, client=client)
@@ -253,7 +253,7 @@ class TestSync:
         store.add_entry(entry)
 
         client = _mock_client()
-        models = ["Lexiweave Cloze", "Lexiweave Vocabulary"]
+        models = ["Lexiweave Cloze v2", "Lexiweave Vocabulary v2"]
         client._request.side_effect = [
             6, ["Spanish::Vocabulary"], models, models, "comer.mp3", 2001,
         ]
@@ -274,7 +274,7 @@ class TestSync:
         store.update_entry("es_comer_001", {"anki_note_id": "999"})
 
         client = _mock_client()
-        models = ["Lexiweave Cloze", "Lexiweave Vocabulary"]
+        models = ["Lexiweave Cloze v2", "Lexiweave Vocabulary v2"]
         client._request.side_effect = [6, ["Spanish::Vocabulary"], models, models, None]
 
         result = sync(store.load().entries, _lang_config(), store, incremental=False, client=client)
@@ -288,7 +288,7 @@ class TestSync:
         store.add_entry(_vocab_entry())
 
         client = _mock_client()
-        models = ["Lexiweave Cloze", "Lexiweave Vocabulary"]
+        models = ["Lexiweave Cloze v2", "Lexiweave Vocabulary v2"]
         client._request.side_effect = [6, ["Spanish::Vocabulary"], models, models, 5555]
 
         sync(store.load().entries, _lang_config(), store, client=client)
@@ -296,3 +296,35 @@ class TestSync:
         saved = store.find_by_word("gato")
         assert saved is not None
         assert saved.anki_note_id == "5555"
+
+    def test_sync_restore_scheduling(self, tmp_data_dir: Path) -> None:
+        from lexiweave.tracking.vocabulary_store import StrengthData
+
+        store = VocabularyStore(tmp_data_dir, "es")
+        entry = _vocab_entry()
+        store.add_entry(entry)
+        # Simulate a word with known interval (30 days)
+        store.update_entry("es_gato_001", {
+            "strength": StrengthData(score=0.7, anki_interval_days=30).model_dump(),
+        })
+
+        client = _mock_client()
+        models = ["Lexiweave Cloze v2", "Lexiweave Vocabulary v2"]
+        # version, deckNames, modelNames x2, addNote, findCards, rescheduleCards
+        client._request.side_effect = [
+            6, ["Spanish::Vocabulary"], models, models, 7777, [11111], None,
+        ]
+
+        sync(
+            store.load().entries, _lang_config(), store,
+            restore_scheduling=True, client=client,
+        )
+
+        actions = [c[0][0] for c in client._request.call_args_list]
+        assert "findCards" in actions
+        assert "rescheduleCards" in actions
+        # rescheduleCards should be called with the stored anki_interval_days
+        reschedule_call = next(
+            c for c in client._request.call_args_list if c[0][0] == "rescheduleCards"
+        )
+        assert reschedule_call[1]["days"] == 30

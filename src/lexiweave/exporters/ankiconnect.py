@@ -36,6 +36,7 @@ from lexiweave.exporters._anki_models import (
     cognate_html,
     extra_html,
     has_cloze,
+    image_field,
     sentences_html,
 )
 from lexiweave.tracking.vocabulary_store import VocabularyEntry, VocabularyStore
@@ -186,6 +187,19 @@ class AnkiConnectClient:
         """Return info dicts for the given note IDs."""
         return list(self._request("notesInfo", notes=note_ids))
 
+    def find_cards(self, note_id: int) -> list[int]:
+        """Return card IDs for a given note ID."""
+        return list(self._request("findCards", query=f"nid:{note_id}"))
+
+    def reschedule_cards(self, card_ids: list[int], days: int) -> None:
+        """Set the interval for cards to ``days`` days.
+
+        This restores approximate scheduling after a deck reimport, without
+        resetting review history. Anki will schedule the cards as if they were
+        last reviewed ``days`` ago.
+        """
+        self._request("rescheduleCards", cards=card_ids, days=days)
+
 
 # --- Sync ---
 
@@ -196,6 +210,10 @@ def _build_cloze_fields(entry: VocabularyEntry, sentence_text: str) -> dict[str,
         "Extra": extra_html(entry),
         "Audio": audio_field(entry),
         "Cognate": cognate_html(entry),
+        "Image": image_field(entry),
+        "Bilingual": entry.definitions.bilingual,
+        "IPA": entry.ipa,
+        "Mnemonic": entry.mnemonic,
     }
 
 
@@ -206,6 +224,10 @@ def _build_vocab_fields(entry: VocabularyEntry) -> dict[str, str]:
         "Sentences": sentences_html(entry),
         "Audio": audio_field(entry),
         "Extra": entry.pos,
+        "Image": image_field(entry),
+        "Bilingual": entry.definitions.bilingual,
+        "IPA": entry.ipa,
+        "Mnemonic": entry.mnemonic,
     }
 
 
@@ -214,6 +236,7 @@ def sync(
     lang_config: LanguageConfig,
     vocab_store: VocabularyStore,
     incremental: bool = True,
+    restore_scheduling: bool = False,
     client: AnkiConnectClient | None = None,
 ) -> SyncResult:
     """Push vocabulary entries to Anki via AnkiConnect.
@@ -223,6 +246,9 @@ def sync(
         - incremental=True: skipped entirely.
         - incremental=False (full sync): fields updated, review history preserved.
     - Audio uploaded for new notes only (audio doesn't change after generation).
+    - restore_scheduling=True: after adding a new note, reschedule its cards
+      to the interval stored in entry.strength.anki_interval_days (useful after a deck
+      reimport to restore approximate scheduling from lexiweave's data).
     """
     if client is None:
         client = AnkiConnectClient()
@@ -285,6 +311,11 @@ def sync(
                         vocab_store.update_entry(entry.id, {"anki_note_id": str(first_note_id)})
                         result.added += 1
 
+                        if restore_scheduling and entry.strength.anki_interval_days > 0:
+                            card_ids = client.find_cards(first_note_id)
+                            if card_ids:
+                                client.reschedule_cards(card_ids, entry.strength.anki_interval_days)
+
                 else:
                     # Full sync: update fields of existing note
                     note_id = int(entry.anki_note_id)
@@ -306,6 +337,11 @@ def sync(
                     note_id = client.add_note(deck_name, VOCAB_MODEL_NAME, fields, tags)
                     vocab_store.update_entry(entry.id, {"anki_note_id": str(note_id)})
                     result.added += 1
+
+                    if restore_scheduling and entry.strength.anki_interval_days > 0:
+                        card_ids = client.find_cards(note_id)
+                        if card_ids:
+                            client.reschedule_cards(card_ids, entry.strength.anki_interval_days)
 
                 else:
                     client.update_note(int(entry.anki_note_id), fields)

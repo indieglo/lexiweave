@@ -29,6 +29,7 @@ from lexiweave.exporters._anki_models import (
     cognate_html,
     extra_html,
     has_cloze,
+    image_field,
     sentences_html,
 )
 from lexiweave.tracking.vocabulary_store import VocabularyEntry, VocabularyStore
@@ -57,7 +58,7 @@ def _to_genanki_templates(templates: list[dict], is_cloze: bool) -> list[dict]:
 
 
 CLOZE_MODEL = genanki.Model(
-    _stable_id("lexiweave_cloze_v3"),
+    _stable_id("lexiweave_cloze_v4"),
     CLOZE_MODEL_NAME,
     fields=[{"name": f} for f in CLOZE_FIELDS],
     templates=_to_genanki_templates(CLOZE_TEMPLATES, is_cloze=True),
@@ -66,7 +67,7 @@ CLOZE_MODEL = genanki.Model(
 )
 
 VOCAB_MODEL = genanki.Model(
-    _stable_id("lexiweave_vocab_v1"),
+    _stable_id("lexiweave_vocab_v2"),
     VOCAB_MODEL_NAME,
     fields=[{"name": f} for f in VOCAB_FIELDS],
     templates=_to_genanki_templates(VOCAB_TEMPLATES, is_cloze=False),
@@ -128,10 +129,15 @@ def export_apkg(
     for entry in entries:
         tags = build_tags(entry)
         audio = audio_field(entry)
+        image = image_field(entry)
 
         # Collect audio media file
         if entry.audio.local_file and Path(entry.audio.local_file).exists():
             media_files.append(entry.audio.local_file)
+
+        # Collect image media file
+        if entry.image.selected_file and Path(entry.image.selected_file).exists():
+            media_files.append(entry.image.selected_file)
 
         if has_cloze(entry):
             # Create cloze cards from sentences
@@ -141,7 +147,16 @@ def export_apkg(
 
                 note = genanki.Note(
                     model=CLOZE_MODEL,
-                    fields=[sentence.text, extra_html(entry), audio, cognate_html(entry)],
+                    fields=[
+                        sentence.text,
+                        extra_html(entry),
+                        audio,
+                        cognate_html(entry),
+                        image,
+                        entry.definitions.bilingual,
+                        entry.ipa,
+                        entry.mnemonic,
+                    ],
                     tags=tags,
                 )
                 deck.add_note(note)
@@ -157,6 +172,10 @@ def export_apkg(
                     sentences_html(entry),
                     audio,
                     entry.pos,
+                    image,
+                    entry.definitions.bilingual,
+                    entry.ipa,
+                    entry.mnemonic,
                 ],
                 tags=tags,
             )

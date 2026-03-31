@@ -27,6 +27,7 @@ class StrengthData(BaseModel):
 
 class DefinitionData(BaseModel):
     monolingual: str = ""
+    bilingual: str = ""
     generated_by: str = ""
     generated_at: str = ""
 
@@ -65,6 +66,8 @@ class VocabularyEntry(BaseModel):
     cefr_level: str | None = None
     source: str = ""
     date_added: str = ""
+    ipa: str = ""
+    mnemonic: str = ""
     strength: StrengthData = Field(default_factory=StrengthData)
     definitions: DefinitionData = Field(default_factory=DefinitionData)
     sentences: list[SentenceData] = Field(default_factory=list)
@@ -136,7 +139,18 @@ class VocabularyStore:
         tmp_path = self.vocab_path.with_suffix(".json.tmp")
         with open(tmp_path, "w", encoding="utf-8") as f:
             json.dump(data.model_dump(mode="json"), f, ensure_ascii=False, indent=2)
-        os.replace(tmp_path, self.vocab_path)
+        try:
+            os.replace(tmp_path, self.vocab_path)
+        except PermissionError:
+            # On Windows, os.replace() fails if the destination is open in
+            # another process (e.g. the file is open in an editor).
+            # Clean up the temp file and raise a clear error.
+            tmp_path.unlink(missing_ok=True)
+            msg = (
+                f"Cannot save {self.vocab_path.name} — the file is open in another "
+                "program. Close the file in your editor and try again."
+            )
+            raise PermissionError(msg) from None
 
     def _generate_id(self, word: str, existing_ids: set[str] | None = None) -> str:
         """Generate ID like 'es_comer_001'. Handles collisions."""

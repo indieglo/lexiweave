@@ -23,12 +23,14 @@ For each word below, provide:
 1. A clear, simple definition in {language_name} (not English). \
 Use vocabulary appropriate for {current_cefr} level.
 2. The part of speech (sustantivo, verbo, adjetivo, adverbio, etc. — in {language_name}).
+3. The IPA pronunciation (e.g. /koˈmer/).
+4. A short English translation (2-5 words, for quick reference).
 
 Words: {word_list}
 
 Respond in JSON format only, no other text:
 [
-  {{"word": "...", "pos": "...", "definition": "..."}}
+  {{"word": "...", "pos": "...", "definition": "...", "ipa": "...", "bilingual": "..."}}
 ]"""
 
 SYSTEM_PROMPT = (
@@ -43,6 +45,8 @@ class DefinitionResult(BaseModel):
     word: str
     pos: str = ""
     definition: str = ""
+    ipa: str = ""
+    bilingual: str = ""
 
 
 class GenerationSummary(BaseModel):
@@ -116,12 +120,15 @@ def apply_definitions(
         updates: dict = {
             "definitions": DefinitionData(
                 monolingual=result.definition,
+                bilingual=result.bilingual,
                 generated_by=model_name,
                 generated_at=now,
             ).model_dump(),
         }
         if result.pos and not entry.pos:
             updates["pos"] = result.pos
+        if result.ipa and not entry.ipa:
+            updates["ipa"] = result.ipa
 
         vocab_store.update_entry(entry.id, updates)
         applied += 1

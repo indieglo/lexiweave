@@ -652,6 +652,15 @@ def export_ankiconnect_cmd(
         "--incremental/--full",
         help="Only push new entries (default) or update all existing notes too.",
     ),
+    restore_scheduling: bool = typer.Option(
+        False,
+        "--restore-scheduling/--no-restore-scheduling",
+        help=(
+            "After adding new notes, restore their Anki intervals from "
+            "lexiweave's saved strength data. Use after a deck reimport "
+            "to avoid re-reviewing words you've already learned."
+        ),
+    ),
     host: str = typer.Option(
         "http://localhost:8765",
         "--host",
@@ -682,7 +691,12 @@ def export_ankiconnect_cmd(
     console.print(f"Syncing [bold]{lang}[/bold] vocabulary to Anki ({mode})...")
 
     client = AnkiConnectClient(host=host)
-    result = sync(entries, lang_config, vocab_store, incremental=incremental, client=client)
+    result = sync(
+        entries, lang_config, vocab_store,
+        incremental=incremental,
+        restore_scheduling=restore_scheduling,
+        client=client,
+    )
 
     if result.errors:
         for error in result.errors[:5]:
