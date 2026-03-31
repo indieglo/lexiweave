@@ -6,6 +6,7 @@ using the Anthropic API, calibrated to the learner's CEFR level.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from datetime import UTC, datetime
 
 from pydantic import BaseModel, Field
@@ -81,10 +82,12 @@ def generate_definitions(
     words: list[str],
     lang_config: LanguageConfig,
     llm_client: LLMClient,
+    on_progress: Callable[[int], None] | None = None,
 ) -> list[DefinitionResult]:
     """Generate definitions for a list of words.
 
     Batches words into groups of BATCH_SIZE and calls the LLM for each batch.
+    on_progress is called with the number of words completed after each batch.
     """
     results: list[DefinitionResult] = []
 
@@ -96,6 +99,9 @@ def generate_definitions(
         if isinstance(raw, list):
             for item in raw:
                 results.append(DefinitionResult(**item))
+
+        if on_progress:
+            on_progress(len(batch))
 
     return results
 
@@ -136,7 +142,15 @@ def apply_definitions(
     return applied
 
 
-def get_words_needing_definitions(vocab_store: VocabularyStore) -> list[VocabularyEntry]:
-    """Return vocabulary entries that don't have definitions yet."""
+def get_words_needing_definitions(
+    vocab_store: VocabularyStore,
+    force: bool = False,
+) -> list[VocabularyEntry]:
+    """Return vocabulary entries that need definitions.
+
+    If force=True, returns all entries (allowing regeneration of existing ones).
+    """
     vocab = vocab_store.load()
+    if force:
+        return list(vocab.entries)
     return [e for e in vocab.entries if _needs_definition(e)]

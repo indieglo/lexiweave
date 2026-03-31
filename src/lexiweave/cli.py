@@ -8,6 +8,7 @@ from pathlib import Path
 
 import typer
 from rich.console import Console
+from rich.progress import BarColumn, MofNCompleteColumn, Progress, TextColumn, TimeRemainingColumn
 from rich.table import Table
 
 from lexiweave.assessment.gap_report import (
@@ -405,6 +406,9 @@ def _make_llm_client(global_config, data_dir) -> LLMClient:
 def generate_definitions_cmd(
     lang: str = typer.Option("es", "--lang", help="Language code"),
     limit: int = typer.Option(50, "--limit", help="Max words to process"),
+    force: bool = typer.Option(
+        False, "--force", help="Regenerate definitions even if they already exist"
+    ),
     dry_run: bool = typer.Option(False, "--dry-run", help="Show what would be generated"),
 ) -> None:
     """Generate monolingual definitions for vocabulary entries."""
@@ -418,7 +422,7 @@ def generate_definitions_cmd(
         console.print(f"[red]{e}[/red]")
         raise typer.Exit(1) from None
 
-    entries = get_words_needing_definitions(vocab_store)[:limit]
+    entries = get_words_needing_definitions(vocab_store, force=force)[:limit]
 
     if not entries:
         console.print(f"[dim]{lang}: All vocabulary entries already have definitions.[/dim]")
@@ -439,11 +443,20 @@ def generate_definitions_cmd(
         raise typer.Exit(1) from None
 
     words = [e.word for e in entries]
-    console.print(f"Generating definitions for {len(words)} words...")
+    with Progress(
+        TextColumn("[progress.description]{task.description}"),
+        BarColumn(),
+        MofNCompleteColumn(),
+        TimeRemainingColumn(),
+        console=console,
+    ) as progress:
+        task = progress.add_task(f"Definitions [{lang}]", total=len(words))
+        results = generate_definitions(
+            words, lang_config, llm_client,
+            on_progress=lambda n: progress.advance(task, n),
+        )
 
-    results = generate_definitions(words, lang_config, llm_client)
     applied = apply_definitions(results, vocab_store, model_name=global_config.anthropic_model)
-
     console.print(f"[green]Done! {applied} definitions added.[/green]")
 
 
@@ -485,11 +498,20 @@ def generate_sentences_cmd(
         raise typer.Exit(1) from None
 
     words = [e.word for e in entries]
-    console.print(f"Generating sentences for {len(words)} words...")
+    with Progress(
+        TextColumn("[progress.description]{task.description}"),
+        BarColumn(),
+        MofNCompleteColumn(),
+        TimeRemainingColumn(),
+        console=console,
+    ) as progress:
+        task = progress.add_task(f"Sentences [{lang}]", total=len(words))
+        results = generate_sentences(
+            words, lang_config, llm_client,
+            on_progress=lambda n: progress.advance(task, n),
+        )
 
-    results = generate_sentences(words, lang_config, llm_client)
     applied = apply_sentences(results, vocab_store)
-
     console.print(f"[green]Done! {applied} entries updated with sentences.[/green]")
 
 
@@ -538,15 +560,20 @@ def generate_cognates_cmd(
         raise typer.Exit(1) from None
 
     words = [e.word for e in entries]
-    console.print(
-        f"Analyzing cognates for {len(words)} words ({lang} → {target_lang})..."
-    )
+    with Progress(
+        TextColumn("[progress.description]{task.description}"),
+        BarColumn(),
+        MofNCompleteColumn(),
+        TimeRemainingColumn(),
+        console=console,
+    ) as progress:
+        task = progress.add_task(f"Cognates [{lang}→{target_lang}]", total=len(words))
+        results = generate_cognates(
+            words, lang_config.language_name, target_lang, llm_client,
+            on_progress=lambda n: progress.advance(task, n),
+        )
 
-    results = generate_cognates(
-        words, lang_config.language_name, target_lang, llm_client
-    )
     applied = apply_cognates(results, vocab_store, target_lang)
-
     console.print(f"[green]Done! {applied} cognate entries added.[/green]")
 
 
@@ -586,7 +613,19 @@ def generate_audio_cmd(
 
     console.print(f"Generating audio for {len(entries)} words (voice: {provider.voice})...")
 
-    results = generate_audio(entries, audio_dir, provider)
+    with Progress(
+        TextColumn("[progress.description]{task.description}"),
+        BarColumn(),
+        MofNCompleteColumn(),
+        TimeRemainingColumn(),
+        console=console,
+    ) as progress:
+        task = progress.add_task(f"Audio [{lang}]", total=len(entries))
+        results = generate_audio(
+            entries, audio_dir, provider,
+            on_progress=lambda n: progress.advance(task, n),
+        )
+
     applied = apply_audio(results, vocab_store)
     errors = [r.error for r in results if not r.success]
 

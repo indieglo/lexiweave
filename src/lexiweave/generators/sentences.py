@@ -6,6 +6,8 @@ using the Anthropic API. Two sentences per word: current level + stretch.
 
 from __future__ import annotations
 
+from collections.abc import Callable
+
 from pydantic import BaseModel, Field
 
 from lexiweave.config import LanguageConfig
@@ -109,10 +111,12 @@ def generate_sentences(
     words: list[str],
     lang_config: LanguageConfig,
     llm_client: LLMClient,
+    on_progress: Callable[[int], None] | None = None,
 ) -> list[SentenceResult]:
     """Generate cloze sentences for a list of words.
 
     Batches words into groups of BATCH_SIZE and calls the LLM for each batch.
+    on_progress is called with the number of words completed after each batch.
     """
     results: list[SentenceResult] = []
 
@@ -124,6 +128,9 @@ def generate_sentences(
         if isinstance(raw, list):
             for item in raw:
                 results.append(SentenceResult(**item))
+
+        if on_progress:
+            on_progress(len(batch))
 
     return results
 

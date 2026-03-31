@@ -6,6 +6,8 @@ using the Anthropic API (e.g., Spanish ↔ Catalan).
 
 from __future__ import annotations
 
+from collections.abc import Callable
+
 from pydantic import BaseModel, Field
 
 from lexiweave.tracking.vocabulary_store import CognateLink, VocabularyEntry, VocabularyStore
@@ -81,10 +83,12 @@ def generate_cognates(
     source_lang: str,
     target_lang: str,
     llm_client: LLMClient,
+    on_progress: Callable[[int], None] | None = None,
 ) -> list[CognateResult]:
     """Generate cognate analysis for a list of words.
 
     Batches words into groups of BATCH_SIZE and calls the LLM for each batch.
+    on_progress is called with the number of words completed after each batch.
     """
     results: list[CognateResult] = []
 
@@ -96,6 +100,9 @@ def generate_cognates(
         if isinstance(raw, list):
             for item in raw:
                 results.append(CognateResult(**item))
+
+        if on_progress:
+            on_progress(len(batch))
 
     return results
 

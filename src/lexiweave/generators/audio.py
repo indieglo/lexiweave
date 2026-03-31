@@ -6,6 +6,7 @@ using the configured TTS provider.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from pathlib import Path
 
 from pydantic import BaseModel, Field
@@ -47,13 +48,19 @@ def generate_audio(
     entries: list[VocabularyEntry],
     audio_dir: Path,
     provider: EdgeTTSProvider,
+    on_progress: Callable[[int], None] | None = None,
 ) -> list[AudioResult]:
-    """Generate audio for a list of vocabulary entries."""
+    """Generate audio for a list of vocabulary entries.
+
+    on_progress is called with 1 after each word is processed.
+    """
     results: list[AudioResult] = []
 
     for entry in entries:
         result = provider.generate(entry.word, audio_dir)
         results.append(result)
+        if on_progress:
+            on_progress(1)
 
     return results
 
