@@ -27,6 +27,7 @@ from lexiweave.exporters.anki_export import (
     export_csv,
     get_exportable_entries,
 )
+from lexiweave.exporters.ankiconnect import AnkiConnectClient, sync
 from lexiweave.generators.audio import (
     apply_audio,
     generate_audio,
@@ -603,6 +604,61 @@ def export_anki_cmd(
             f"[dim]  {result.skipped} entries skipped "
             f"(no definitions or sentences)[/dim]"
         )
+
+
+@export_app.command(name="ankiconnect")
+def export_ankiconnect_cmd(
+    lang: str = typer.Option("es", "--lang", help="Language code"),
+    incremental: bool = typer.Option(
+        True,
+        "--incremental/--full",
+        help="Only push new entries (default) or update all existing notes too.",
+    ),
+    host: str = typer.Option(
+        "http://localhost:8765",
+        "--host",
+        help="AnkiConnect host URL",
+    ),
+) -> None:
+    """Push vocabulary directly to Anki via the AnkiConnect add-on.
+
+    Anki must be running with AnkiConnect installed (add-on 2055492159).
+    New entries are added and their note IDs saved. Existing entries are
+    updated in-place (--full) without losing review history, or skipped
+    (--incremental, the default).
+    """
+    global_config = load_global_config()
+    data_dir = get_data_dir(global_config)
+    vocab_store = VocabularyStore(data_dir, lang)
+
+    try:
+        lang_config = load_language_config(lang)
+    except FileNotFoundError as e:
+        console.print(f"[red]{e}[/red]")
+        raise typer.Exit(1) from None
+
+    vocab = vocab_store.load()
+    entries = vocab.entries
+
+    mode = "new entries only" if incremental else "all entries (full sync)"
+    console.print(f"Syncing [bold]{lang}[/bold] vocabulary to Anki ({mode})...")
+
+    client = AnkiConnectClient(host=host)
+    result = sync(entries, lang_config, vocab_store, incremental=incremental, client=client)
+
+    if result.errors:
+        for error in result.errors[:5]:
+            console.print(f"[red]{error}[/red]")
+        if result.added == 0 and result.updated == 0:
+            raise typer.Exit(1)
+
+    console.print(f"[green]Done![/green] Added {result.added}, updated {result.updated}.")
+    if result.audio_uploaded:
+        console.print(f"[dim]  {result.audio_uploaded} audio files uploaded.[/dim]")
+    if result.skipped:
+        console.print(f"[dim]  {result.skipped} entries skipped.[/dim]")
+    if result.errors:
+        console.print(f"[yellow]  {len(result.errors)} errors (see above).[/yellow]")
 
 
 # --- Track commands ---
