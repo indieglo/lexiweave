@@ -10,6 +10,7 @@ no updateModel action) — bump the version suffix in the model name.
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 from lexiweave.tracking.vocabulary_store import VocabularyEntry
@@ -48,9 +49,9 @@ CLOZE_TEMPLATES = [
             "<hr>"
             '{{#IPA}}<div class="ipa">{{IPA}}</div>{{/IPA}}'
             '<div class="definition">{{Extra}}</div>'
-            '{{#Bilingual}}<div class="bilingual">{{Bilingual}}</div>{{/Bilingual}}'
-            '{{#Cognate}}<div class="cognate">{{Cognate}}</div>{{/Cognate}}'
-            '{{#Mnemonic}}<div class="mnemonic">💡 {{Mnemonic}}</div>{{/Mnemonic}}'
+            '{{#Bilingual}}<div class="pill-row"><span class="bilingual">{{Bilingual}}</span></div>{{/Bilingual}}'  # noqa: E501
+            '{{#Cognate}}<div class="pill-row"><span class="cognate">{{Cognate}}</span></div>{{/Cognate}}'  # noqa: E501
+            '{{#Mnemonic}}<div class="pill-row"><span class="mnemonic">💡 {{Mnemonic}}</span></div>{{/Mnemonic}}'  # noqa: E501
             '<div class="audio">{{Audio}}</div>'
         ),
     },
@@ -70,9 +71,9 @@ VOCAB_TEMPLATES = [
             "<hr>"
             '{{#IPA}}<div class="ipa">{{IPA}}</div>{{/IPA}}'
             '<div class="definition">{{Definition}}</div>'
-            '{{#Bilingual}}<div class="bilingual">{{Bilingual}}</div>{{/Bilingual}}'
-            "{{Sentences}}"
-            '{{#Mnemonic}}<div class="mnemonic">💡 {{Mnemonic}}</div>{{/Mnemonic}}'
+            '{{#Bilingual}}<div class="pill-row"><span class="bilingual">{{Bilingual}}</span></div>{{/Bilingual}}'  # noqa: E501
+            '<div class="sentences">{{Sentences}}</div>'
+            '{{#Mnemonic}}<div class="pill-row"><span class="mnemonic">💡 {{Mnemonic}}</span></div>{{/Mnemonic}}'  # noqa: E501
             "<br>{{Audio}}"
         ),
     },
@@ -81,27 +82,39 @@ VOCAB_TEMPLATES = [
 # --- CSS ---
 
 CLOZE_CSS = (
+    # Base card
     ".card { font-family: Arial, sans-serif; font-size: 18px; "
-    "text-align: left; color: #333; background: #fff; padding: 20px; }"
-    ".cloze { font-weight: bold; color: #2196F3; }"
+    "text-align: center; color: #1a1a1a; background: #fff; padding: 20px; }"
+    ".cloze { font-weight: bold; color: #2a6a9e; }"  # Barcelona Blue light
     "hr { border: none; border-top: 1px solid #ddd; margin: 16px 0; }"
     ".word { font-size: 24px; font-weight: bold; margin-bottom: 8px; }"
-    ".ipa { color: #888; font-size: 14px; font-family: monospace; "
-    "margin-bottom: 8px; }"
-    ".definition { color: #444; font-size: 16px; font-style: italic; "
-    "margin-bottom: 8px; }"
-    ".bilingual { color: #2e7d32; font-size: 14px; margin-bottom: 8px; "
-    "padding: 3px 8px; background: #e8f5e9; border-radius: 4px; "
-    "display: inline-block; }"
-    ".cognate { color: #888; font-size: 13px; margin-bottom: 12px; "
-    "padding: 4px 8px; background: #f5f5f5; border-radius: 4px; "
-    "display: inline-block; }"
-    ".cognate .false-friend { color: #e53935; }"
-    ".image { text-align: center; margin: 12px 0; }"
+    ".ipa { color: #6b6b6b; font-size: 14px; font-family: monospace; margin-bottom: 14px; }"
+    ".definition { color: #444; font-size: 16px; font-style: italic; margin-bottom: 14px; }"
+    # Pills — light mode (brand colors, light bg + dark text)
+    ".pill-row { margin-bottom: 12px; }"
+    ".bilingual { display: inline-block; font-size: 14px; padding: 3px 12px; "
+    "border-radius: 4px; background: #d6f0e3; color: #1a7a4a; }"  # New Growth Green
+    ".cognate { display: inline-block; font-size: 13px; padding: 4px 12px; "
+    "border-radius: 4px; background: #daeaf7; color: #2a6a9e; }"  # Barcelona Blue
+    ".cognate .false-friend { color: #a83232; }"  # Senyera Sunset light
+    ".mnemonic { display: inline-block; font-size: 14px; padding: 6px 12px; "
+    "border-radius: 4px; background: #faebd4; color: #a07830; }"  # Sagrada Gold
+    # Image
+    ".image { margin: 16px auto; }"
     ".image img { max-width: 300px; max-height: 200px; border-radius: 8px; }"
-    ".mnemonic { color: #6a1b9a; font-size: 14px; margin-top: 12px; "
-    "padding: 6px 10px; background: #f3e5f5; border-radius: 4px; }"
-    ".audio { margin-top: 8px; }"
+    ".sentences { margin-bottom: 12px; }"
+    ".sentences div { margin-bottom: 6px; }"
+    ".audio { margin-top: 12px; }"
+    # Dark mode overrides (Anki adds .nightMode to body)
+    ".nightMode .card { background: #171717; color: #e8e8e8; }"
+    ".nightMode .cloze { color: #5a9fd4; }"  # Barcelona Blue dark
+    ".nightMode hr { border-top-color: #333; }"
+    ".nightMode .ipa { color: #888; }"
+    ".nightMode .definition { color: #bbb; }"
+    ".nightMode .bilingual { background: rgba(92,184,138,0.18); color: #5cb88a; }"
+    ".nightMode .cognate { background: rgba(90,159,212,0.18); color: #5a9fd4; }"
+    ".nightMode .cognate .false-friend { color: #d45a5a; }"
+    ".nightMode .mnemonic { background: rgba(212,160,84,0.18); color: #d4a054; }"
 )
 
 VOCAB_CSS = CLOZE_CSS
@@ -162,14 +175,26 @@ def cognate_html(entry: VocabularyEntry) -> str:
     return " &nbsp;|&nbsp; ".join(parts)
 
 
+_CLOZE_RE = re.compile(r"\{\{c\d+::([^}]+)\}\}")
+
+
+def _strip_cloze(text: str) -> str:
+    """Replace {{c1::word}} with a bold highlight of the word."""
+    return _CLOZE_RE.sub(r'<b class="cloze">\1</b>', text)
+
+
 def sentences_html(entry: VocabularyEntry) -> str:
-    """Format sentences as HTML for the Sentences field."""
+    """Format sentences as HTML for the Sentences field (vocab cards).
+
+    Cloze markers are stripped and replaced with a bold highlight so the
+    sentence reads naturally on a non-cloze card type.
+    """
     if not entry.sentences:
         return ""
     parts = []
     for s in entry.sentences:
         level_tag = f" ({s.cefr_level})" if s.cefr_level else ""
-        parts.append(f"<div>{s.text}{level_tag}</div>")
+        parts.append(f"<div>{_strip_cloze(s.text)}{level_tag}</div>")
     return "".join(parts)
 
 
