@@ -50,6 +50,7 @@ from lexiweave.generators.sentences import (
     get_words_needing_sentences,
 )
 from lexiweave.importers.duolingo import import_duolingo
+from lexiweave.importers.frequency import import_frequency_list
 from lexiweave.tracking.stats import (
     format_stats,
     get_cross_language_stats,
@@ -139,58 +140,95 @@ def setup(
 
 @app.command(name="import")
 def import_cmd(
-    source: str = typer.Argument(help="Import source: 'duolingo'"),
-    vocab_csv: Path = typer.Option(..., "--vocab-csv", help="Path to vocabulary CSV file"),
+    source: str = typer.Argument(help="Import source: 'duolingo' or 'frequency'"),
+    vocab_csv: Path | None = typer.Option(
+        None, "--vocab-csv", help="Path to vocabulary CSV (duolingo)"
+    ),
     gdpr_dir: Path | None = typer.Option(
         None, "--gdpr-dir", help="Path to Duolingo GDPR export directory"
+    ),
+    file: Path | None = typer.Option(
+        None, "--file", help="Path to frequency list file (frequency)"
+    ),
+    limit: int = typer.Option(1000, "--limit", help="Max words to import (frequency)"),
+    skip_top: int = typer.Option(
+        0, "--skip-top", help="Skip top N entries from frequency list"
     ),
     lang: str = typer.Option("es", "--lang", help="Language code"),
 ) -> None:
     """Import vocabulary from an external source."""
-    if source != "duolingo":
-        console.print(f"[red]Unknown source '{source}'. Supported: duolingo[/red]")
-        raise typer.Exit(1)
-
-    if not vocab_csv.exists():
-        console.print(f"[red]Vocabulary CSV not found: {vocab_csv}[/red]")
-        raise typer.Exit(1)
-
     global_config = load_global_config()
     data_dir = get_data_dir(global_config)
     store = VocabularyStore(data_dir, lang)
 
-    console.print(f"Importing Duolingo data for [bold]{lang}[/bold]...")
+    if source == "duolingo":
+        if vocab_csv is None:
+            console.print("[red]--vocab-csv is required for duolingo source[/red]")
+            raise typer.Exit(1)
+        if not vocab_csv.exists():
+            console.print(f"[red]Vocabulary CSV not found: {vocab_csv}[/red]")
+            raise typer.Exit(1)
 
-    result = import_duolingo(vocab_csv, gdpr_dir, lang, store)
+        console.print(f"Importing Duolingo data for [bold]{lang}[/bold]...")
+        result = import_duolingo(vocab_csv, gdpr_dir, lang, store)
 
-    # Display warnings
-    for warning in result.warnings:
-        console.print(f"[yellow]  Warning: {warning}[/yellow]")
+        for warning in result.warnings:
+            console.print(f"[yellow]  Warning: {warning}[/yellow]")
 
-    # Display results
-    console.print()
-    table = Table(title="Import Summary")
-    table.add_column("Metric", style="bold")
-    table.add_column("Value", justify="right")
+        console.print()
+        table = Table(title="Import Summary")
+        table.add_column("Metric", style="bold")
+        table.add_column("Value", justify="right")
+        table.add_row("Words in CSV", str(result.total_words_in_csv))
+        table.add_row("Unique words", str(result.unique_words))
+        table.add_row("New entries added", str(result.new_entries_added))
+        table.add_row("Duplicates skipped", str(result.duplicates_skipped))
 
-    table.add_row("Words in CSV", str(result.total_words_in_csv))
-    table.add_row("Unique words", str(result.unique_words))
-    table.add_row("New entries added", str(result.new_entries_added))
-    table.add_row("Duplicates skipped", str(result.duplicates_skipped))
+        if result.language_stats:
+            ls = result.language_stats
+            table.add_row("", "")
+            table.add_row("Duolingo XP", f"{ls.points:,}")
+            table.add_row("Total lessons", f"{ls.total_lessons:,}")
+            table.add_row("Days active", f"{ls.days_active:,}")
+            if ls.last_active:
+                table.add_row("Last active", ls.last_active)
 
-    if result.language_stats:
-        stats = result.language_stats
-        table.add_row("", "")
-        table.add_row("Duolingo XP", f"{stats.points:,}")
-        table.add_row("Total lessons", f"{stats.total_lessons:,}")
-        table.add_row("Days active", f"{stats.days_active:,}")
-        if stats.last_active:
-            table.add_row("Last active", stats.last_active)
+        if result.leaderboard_weeks > 0:
+            table.add_row("Leaderboard weeks", str(result.leaderboard_weeks))
 
-    if result.leaderboard_weeks > 0:
-        table.add_row("Leaderboard weeks", str(result.leaderboard_weeks))
+        console.print(table)
 
-    console.print(table)
+    elif source == "frequency":
+        if file is None:
+            console.print("[red]--file is required for frequency source[/red]")
+            raise typer.Exit(1)
+        if not file.exists():
+            console.print(f"[red]Frequency list not found: {file}[/red]")
+            raise typer.Exit(1)
+
+        console.print(
+            f"Importing frequency list for [bold]{lang}[/bold] "
+            f"(limit={limit}, skip_top={skip_top})..."
+        )
+        result = import_frequency_list(
+            file, lang, store, limit=limit, skip_top=skip_top
+        )
+
+        console.print()
+        table = Table(title="Frequency Import Summary")
+        table.add_column("Metric", style="bold")
+        table.add_column("Value", justify="right")
+        table.add_row("Total in file", str(result.total_in_file))
+        table.add_row("Imported", str(result.imported))
+        table.add_row("Filtered/skipped", str(result.skipped_filter))
+        table.add_row("Duplicates skipped", str(result.duplicates_skipped))
+        console.print(table)
+
+    else:
+        console.print(
+            f"[red]Unknown source '{source}'. Supported: duolingo, frequency[/red]"
+        )
+        raise typer.Exit(1)
 
 
 @app.command()
